@@ -14,6 +14,8 @@ const shamisenPalettes = {
 
 const instruments = ["Koto", "Shamisen", "Shakuhachi"];
 const COLUMNS_PER_PAGE = 8;
+const PANEL_MIN_WIDTH = 220;
+const PANEL_MAX_WIDTH = 520;
 
 const state = {
   score: {
@@ -29,6 +31,11 @@ const state = {
   activeCell: null,
   selectedColumnId: null,
   currentPage: 0,
+  printMode: false,
+  ui: {
+    leftPanelWidth: 280,
+    rightPanelWidth: 280
+  },
   selectedSymbol: "5",
   selectedOrnament: "",
   selectedAccidental: ""
@@ -95,6 +102,7 @@ function render() {
 
 function layout() {
   const root = el("div", { className: "app" });
+  applyGridColumns(root);
   root.append(leftPanel(), canvas(), rightPanel());
   return root;
 }
@@ -108,6 +116,7 @@ function leftPanel() {
   panel.append(control("Instrument", instrumentSelect()));
   panel.append(control("Tempo", tempoInput()));
   panel.append(control("Time Signature", timeSignatureReadonly()));
+  panel.append(button("Print...", () => printAllPages()));
 
   panel.append(el("h2", { text: "Grid" }));
   panel.append(button("Add 4-Measure Column", () => addColumn()));
@@ -153,6 +162,10 @@ function leftPanel() {
     panel.append(button("Clear Active Cell", () => clearActiveCell(), "danger"));
   }
 
+  const resizeHandle = el("div", { className: "panel-resizer panel-resizer-right" });
+  resizeHandle.addEventListener("mousedown", (event) => startResize("left", event));
+  panel.append(resizeHandle);
+
   return panel;
 }
 
@@ -181,6 +194,10 @@ function rightPanel() {
     panel.append(palette);
     panel.append(el("p", { className: "hint", text: "Drag from palette to any eighth-note slot." }));
   }
+
+  const resizeHandle = el("div", { className: "panel-resizer panel-resizer-left" });
+  resizeHandle.addEventListener("mousedown", (event) => startResize("right", event));
+  panel.append(resizeHandle);
 
   return panel;
 }
@@ -271,14 +288,30 @@ function symbolButton(symbol) {
 
 function canvas() {
   const center = el("main", { className: "score-stage" });
+
+  if (state.printMode) {
+    const printStack = el("div", { className: "print-stack" });
+    for (let pageIndex = 0; pageIndex < getPageCount(); pageIndex += 1) {
+      printStack.append(renderSheetPage(pageIndex));
+    }
+    center.append(printStack);
+    return center;
+  }
+
+  const shell = el("div", { className: "sheet-shell" });
   const pageNav = el("div", { className: "canvas-page-nav" });
   pageNav.append(
     button("<", () => movePage(-1), "nav-btn"),
-    el("span", { className: "page-indicator", text: `${state.currentPage + 1} / ${getPageCount()}` }),
+    el("span", { className: "page-indicator", text: `Page ${state.currentPage + 1} / ${getPageCount()}` }),
     button(">", () => movePage(1), "nav-btn")
   );
-  center.append(pageNav);
+  const page = renderSheetPage(state.currentPage);
+  shell.append(page, pageNav);
+  center.append(shell);
+  return center;
+}
 
+function renderSheetPage(pageIndex) {
   const page = el("section", { className: "sheet-page" });
   const meta = el("div", { className: "sheet-meta" });
   meta.append(el("span", { className: "sheet-title-text", text: state.score.title }));
@@ -287,7 +320,7 @@ function canvas() {
 
   const body = el("div", { className: "sheet-body" });
   const track = el("div", { className: "column-track" });
-  getVisibleColumns().forEach((column) => {
+  getColumnsForPage(pageIndex).forEach((column) => {
     track.append(renderColumn(column));
   });
 
@@ -296,8 +329,7 @@ function canvas() {
 
   body.append(track, sideText);
   page.append(body);
-  center.append(page);
-  return center;
+  return page;
 }
 
 function renderColumn(column) {
@@ -592,6 +624,43 @@ function symbolLabel(symbol) {
   return `${symbol.base}${symbol.accidental || ""}${symbol.ornament || ""}`;
 }
 
+function applyGridColumns(target = null) {
+  const app = target || document.querySelector(".app");
+  if (!app) return;
+  app.style.gridTemplateColumns = `${state.ui.leftPanelWidth}px minmax(460px, 1fr) ${state.ui.rightPanelWidth}px`;
+}
+
+function startResize(side, event) {
+  event.preventDefault();
+  const startX = event.clientX;
+  const startLeft = state.ui.leftPanelWidth;
+  const startRight = state.ui.rightPanelWidth;
+  document.body.classList.add("is-resizing");
+
+  const onMouseMove = (moveEvent) => {
+    const delta = moveEvent.clientX - startX;
+    if (side === "left") {
+      state.ui.leftPanelWidth = clamp(startLeft + delta, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH);
+    } else {
+      state.ui.rightPanelWidth = clamp(startRight - delta, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH);
+    }
+    applyGridColumns();
+  };
+
+  const onMouseUp = () => {
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+    document.body.classList.remove("is-resizing");
+  };
+
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("mouseup", onMouseUp);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function addColumn() {
   state.score.columns.push(makeColumn(state.score.columns.length + 1));
   renumberColumns();
@@ -638,6 +707,11 @@ function getVisibleColumns() {
   return state.score.columns.slice(start, start + COLUMNS_PER_PAGE);
 }
 
+function getColumnsForPage(pageIndex) {
+  const start = pageIndex * COLUMNS_PER_PAGE;
+  return state.score.columns.slice(start, start + COLUMNS_PER_PAGE);
+}
+
 function movePage(delta) {
   const next = Math.min(
     Math.max(state.currentPage + delta, 0),
@@ -645,6 +719,16 @@ function movePage(delta) {
   );
   state.currentPage = next;
   render();
+}
+
+function printAllPages() {
+  state.printMode = true;
+  render();
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.print();
+    });
+  });
 }
 
 function ensureCurrentPageInRange() {
@@ -876,5 +960,11 @@ function el(tag, options = {}) {
   if (options.text) node.textContent = options.text;
   return node;
 }
+
+window.addEventListener("afterprint", () => {
+  if (!state.printMode) return;
+  state.printMode = false;
+  render();
+});
 
 render();
