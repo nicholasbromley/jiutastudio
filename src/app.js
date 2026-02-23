@@ -313,11 +313,6 @@ function canvas() {
 
 function renderSheetPage(pageIndex) {
   const page = el("section", { className: "sheet-page" });
-  const meta = el("div", { className: "sheet-meta" });
-  meta.append(el("span", { className: "sheet-title-text", text: state.score.title }));
-  meta.append(el("span", { text: `${state.score.timeSignature.beatsPerMeasure}/${state.score.timeSignature.beatUnit}` }));
-  page.append(meta);
-
   const body = el("div", { className: "sheet-body" });
   const track = el("div", { className: "column-track" });
   getColumnsForPage(pageIndex).forEach((column) => {
@@ -325,7 +320,10 @@ function renderSheetPage(pageIndex) {
   });
 
   const sideText = el("div", { className: "sheet-side-text" });
-  sideText.append(el("span", { className: "sheet-side-title", text: state.score.title || "Untitled" }));
+  const sideMeta = el("div", { className: "sheet-side-meta" });
+  sideMeta.append(el("span", { className: "sheet-side-title", text: state.score.title || "Untitled" }));
+  sideMeta.append(el("span", { className: "sheet-side-time", text: `${state.score.timeSignature.beatsPerMeasure}/${state.score.timeSignature.beatUnit}` }));
+  sideText.append(sideMeta);
 
   body.append(track, sideText);
   page.append(body);
