@@ -17,12 +17,13 @@ Then open:
 
 ## Current capabilities
 
-- Vertical notation canvas with right-to-left columns
-- Instrument columns for Koto, Shamisen, and Shakuhachi
-- Segment-based symbol entry from an instrument-aware palette
-- Drag and drop from palette into segments
-- Drag to reorder/move existing symbols between segments
+- Single-instrument score mode (Koto, Shamisen, or Shakuhachi)
+- 4/4 timing grid with fixed structure:
+  - 1 column = 4 measures
+  - 1 measure = 4 beats
+  - 1 beat = 2 eighth-note slots (with midpoint divider line)
+- Drag and drop from instrument-specific palette into any slot
+- Drag and move existing symbols slot-to-slot
 - Instrument compatibility checks when dropping symbols
-- Basic technique annotations
-- Lyric entry per segment
+- Quick load button for Sakura opening pattern (`5, 5, 7, ●`)
 - Score metadata controls (title and tempo)
