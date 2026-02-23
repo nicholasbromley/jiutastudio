@@ -32,5 +32,11 @@ Then open:
   - Ichi no ito: `イ一..イ九`, then dotted octave markers
 - Shamisen quick marker buttons for selected cell (apply/remove `ス`, `^`, and `♯` in one click)
 - Default ornament and sharp controls for newly placed Shamisen notes
+- Shamisen rest symbols in their own category: empty circle (`○`) and circle-with-dot (`◉`)
+- Right-side sheet title follows the score title text
+- Column headers show starting measure numbers (`1`, `5`, `9`, ...)
+- Per-slot 16th-note support by splitting an eighth slot into two stacked mini-slots
+- Up to 8 columns rendered per page; additional columns spill to next pages
+- Page navigation controls (Prev/Next) and selected-column deletion
 - Quick load button for Sakura opening pattern (`5, 5, 7, ●`)
 - Score metadata controls (title and tempo)

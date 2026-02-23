@@ -7,11 +7,13 @@ const shamisenPalettes = {
   sanNoIto: makeDotted(["1", "2", "3", "4", "5", "6", "7", "8", "9"]),
   niNoIto: makeDotted(["一", "二", "三", "四", "五", "六", "七", "八", "九"]),
   ichiNoIto: makeDotted(["イ一", "イ二", "イ三", "イ四", "イ五", "イ六", "イ七", "イ八", "イ九"]),
+  rests: ["○", "◉"],
   ornaments: ["", "ス", "^"],
   accidentals: ["", "♯"]
 };
 
 const instruments = ["Koto", "Shamisen", "Shakuhachi"];
+const COLUMNS_PER_PAGE = 8;
 
 const state = {
   score: {
@@ -25,16 +27,19 @@ const state = {
     columns: [makeColumn(1)]
   },
   activeCell: null,
+  selectedColumnId: null,
+  currentPage: 0,
   selectedSymbol: "5",
   selectedOrnament: "",
   selectedAccidental: ""
 };
 
 function makeColumn(index) {
+  const startMeasure = (index - 1) * 4 + 1;
   return {
     id: crypto.randomUUID(),
-    label: `Column ${index}`,
-    measures: Array.from({ length: 4 }, (_, i) => makeMeasure(i + 1))
+    label: String(startMeasure),
+    measures: Array.from({ length: 4 }, (_, i) => makeMeasure(startMeasure + i))
   };
 }
 
@@ -53,16 +58,33 @@ function makeBeat() {
 }
 
 function makeSymbol(base, accidental = "", ornament = "") {
+  const safeAccidental = isRestSymbol(base) ? "" : accidental;
+  const safeOrnament = isRestSymbol(base) ? "" : ornament;
   return {
     id: crypto.randomUUID(),
     base,
-    accidental,
-    ornament
+    accidental: safeAccidental,
+    ornament: safeOrnament
   };
 }
 
 function makeDotted(items) {
   return [...items, ...items.map((item) => `${item}•`)];
+}
+
+function isRestSymbol(base) {
+  return shamisenPalettes.rests.includes(base);
+}
+
+function makeSplitSlot() {
+  return {
+    type: "split",
+    notes: [null, null]
+  };
+}
+
+function isSplitSlot(slotValue) {
+  return Boolean(slotValue && typeof slotValue === "object" && slotValue.type === "split");
 }
 
 function render() {
@@ -89,7 +111,13 @@ function leftPanel() {
 
   panel.append(el("h2", { text: "Grid" }));
   panel.append(button("Add 4-Measure Column", () => addColumn()));
-  panel.append(button("Load Sakura Opening (5,5,7,●)", () => loadSakuraOpening()));
+  panel.append(
+    button(
+      "Delete Selected Column",
+      () => deleteSelectedColumn(),
+      state.selectedColumnId ? "danger" : ""
+    )
+  );
   panel.append(
     el("p", {
       className: "hint",
@@ -100,6 +128,11 @@ function leftPanel() {
   if (state.activeCell) {
     panel.append(el("h2", { text: "Active Cell" }));
     panel.append(el("p", { text: activeCellLabel() }));
+    if (isActiveCellSplit()) {
+      panel.append(button("Merge To 8th", () => mergeActiveCellSlot()));
+    } else {
+      panel.append(button("Split To 16ths", () => splitActiveCellSlot()));
+    }
     if (state.score.instrument === "Shamisen") {
       panel.append(el("p", { className: "palette-label", text: "Quick Markers" }));
       const quick = el("div", { className: "ornament-row" });
@@ -133,6 +166,7 @@ function rightPanel() {
     panel.append(buildPaletteSection("San no ito (3rd)", shamisenPalettes.sanNoIto));
     panel.append(buildPaletteSection("Ni no ito (2nd)", shamisenPalettes.niNoIto));
     panel.append(buildPaletteSection("Ichi no ito (1st)", shamisenPalettes.ichiNoIto));
+    panel.append(buildPaletteSection("Rests", shamisenPalettes.rests));
     panel.append(ornamentSection());
     panel.append(accidentalSection());
     panel.append(el("p", {
@@ -237,22 +271,28 @@ function symbolButton(symbol) {
 
 function canvas() {
   const center = el("main", { className: "score-stage" });
+  const pageNav = el("div", { className: "canvas-page-nav" });
+  pageNav.append(
+    button("<", () => movePage(-1), "nav-btn"),
+    el("span", { className: "page-indicator", text: `${state.currentPage + 1} / ${getPageCount()}` }),
+    button(">", () => movePage(1), "nav-btn")
+  );
+  center.append(pageNav);
+
   const page = el("section", { className: "sheet-page" });
   const meta = el("div", { className: "sheet-meta" });
   meta.append(el("span", { className: "sheet-title-text", text: state.score.title }));
-  meta.append(el("span", { text: "Repeat Twice" }));
   meta.append(el("span", { text: `${state.score.timeSignature.beatsPerMeasure}/${state.score.timeSignature.beatUnit}` }));
   page.append(meta);
 
   const body = el("div", { className: "sheet-body" });
   const track = el("div", { className: "column-track" });
-  state.score.columns.forEach((column) => {
+  getVisibleColumns().forEach((column) => {
     track.append(renderColumn(column));
   });
 
   const sideText = el("div", { className: "sheet-side-text" });
-  sideText.append(el("span", { text: "さくら" }));
-  sideText.append(el("span", { text: "合奏" }));
+  sideText.append(el("span", { className: "sheet-side-title", text: state.score.title || "Untitled" }));
 
   body.append(track, sideText);
   page.append(body);
@@ -261,10 +301,15 @@ function canvas() {
 }
 
 function renderColumn(column) {
-  const container = el("section", { className: "column" });
+  const selected = column.id === state.selectedColumnId;
+  const container = el("section", { className: `column${selected ? " selected" : ""}` });
   const head = el("div", { className: "column-head" });
   head.append(el("span", { className: "column-name", text: column.label }));
-  head.append(el("span", { className: "time-chip", text: "4 measures" }));
+  head.addEventListener("click", (event) => {
+    event.stopPropagation();
+    state.selectedColumnId = column.id;
+    render();
+  });
   container.append(head);
 
   const list = el("div", { className: "measure-list" });
@@ -275,8 +320,6 @@ function renderColumn(column) {
 
 function renderMeasure(column, measure) {
   const section = el("article", { className: "measure" });
-  section.append(el("div", { className: "measure-head", text: `M${measure.index}` }));
-
   const beats = el("div", { className: "beat-grid" });
   measure.beats.forEach((beat, beatIndex) => {
     beats.append(renderBeatCell(column, measure, beat, beatIndex));
@@ -287,30 +330,81 @@ function renderMeasure(column, measure) {
 
 function renderBeatCell(column, measure, beat, beatIndex) {
   const beatCell = el("div", { className: "beat-cell" });
-  beatCell.append(el("div", { className: "beat-num", text: String(beatIndex + 1) }));
 
   const slotWrap = el("div", { className: "eighth-slots" });
-  beat.slots.forEach((symbol, slotIndex) => {
-    slotWrap.append(renderSlot(column, measure, beatIndex, slotIndex, symbol));
+  beat.slots.forEach((slotValue, slotIndex) => {
+    slotWrap.append(renderSlot(column, measure, beatIndex, slotIndex, slotValue));
   });
 
   beatCell.append(slotWrap);
   return beatCell;
 }
 
-function renderSlot(column, measure, beatIndex, slotIndex, symbol) {
-  const active = isActiveCell(column.id, measure.id, beatIndex, slotIndex);
+function renderSlot(column, measure, beatIndex, slotIndex, slotValue) {
+  if (isSplitSlot(slotValue)) {
+    const splitWrap = el("div", { className: "slot split-slot" });
+    splitWrap.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const subIndex = getSplitSubIndexFromPointer(event, splitWrap);
+      setActiveCell(column.id, measure.id, beatIndex, slotIndex, subIndex);
+      render();
+    });
+    splitWrap.addEventListener("dragover", (event) => onSlotDragOver(event));
+    splitWrap.addEventListener("dragleave", () => splitWrap.classList.remove("drop-target"));
+    splitWrap.addEventListener("drop", (event) => {
+      const subIndex = getSplitSubIndexFromPointer(event, splitWrap);
+      onSlotDrop(event, column.id, measure.id, beatIndex, slotIndex, subIndex);
+      splitWrap.classList.remove("drop-target");
+    });
+    slotValue.notes.forEach((symbol, subIndex) => {
+      splitWrap.append(renderSplitSubSlot(column, measure, beatIndex, slotIndex, subIndex, symbol));
+    });
+    return splitWrap;
+  }
+
+  const active = isActiveCell(column.id, measure.id, beatIndex, slotIndex, null);
   const slot = el("div", { className: `slot${active ? " active" : ""}` });
-  slot.textContent = symbolLabel(symbol);
-  slot.draggable = Boolean(symbol);
+  slot.textContent = symbolLabel(slotValue);
+  slot.draggable = Boolean(slotValue);
 
   slot.addEventListener("click", (event) => {
     event.stopPropagation();
-    setActiveCell(column.id, measure.id, beatIndex, slotIndex);
+    setActiveCell(column.id, measure.id, beatIndex, slotIndex, null);
     render();
   });
 
   slot.addEventListener("dragstart", (event) => {
+    if (!slotValue) return;
+    event.dataTransfer.setData("text/plain", JSON.stringify({
+      type: "existing-symbol",
+      symbolId: slotValue.id
+    }));
+    event.dataTransfer.effectAllowed = "move";
+  });
+
+  slot.addEventListener("dragover", (event) => onSlotDragOver(event));
+  slot.addEventListener("dragleave", () => slot.classList.remove("drop-target"));
+  slot.addEventListener("drop", (event) => {
+    onSlotDrop(event, column.id, measure.id, beatIndex, slotIndex, null);
+    slot.classList.remove("drop-target");
+  });
+
+  return slot;
+}
+
+function renderSplitSubSlot(column, measure, beatIndex, slotIndex, subIndex, symbol) {
+  const active = isActiveCell(column.id, measure.id, beatIndex, slotIndex, subIndex);
+  const sub = el("div", { className: `sub-slot${active ? " active" : ""}` });
+  sub.textContent = symbolLabel(symbol);
+  sub.draggable = Boolean(symbol);
+
+  sub.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setActiveCell(column.id, measure.id, beatIndex, slotIndex, subIndex);
+    render();
+  });
+
+  sub.addEventListener("dragstart", (event) => {
     if (!symbol) return;
     event.dataTransfer.setData("text/plain", JSON.stringify({
       type: "existing-symbol",
@@ -319,14 +413,20 @@ function renderSlot(column, measure, beatIndex, slotIndex, symbol) {
     event.dataTransfer.effectAllowed = "move";
   });
 
-  slot.addEventListener("dragover", (event) => onSlotDragOver(event));
-  slot.addEventListener("dragleave", () => slot.classList.remove("drop-target"));
-  slot.addEventListener("drop", (event) => {
-    onSlotDrop(event, column.id, measure.id, beatIndex, slotIndex);
-    slot.classList.remove("drop-target");
+  sub.addEventListener("dragover", (event) => onSlotDragOver(event));
+  sub.addEventListener("dragleave", () => sub.classList.remove("drop-target"));
+  sub.addEventListener("drop", (event) => {
+    onSlotDrop(event, column.id, measure.id, beatIndex, slotIndex, subIndex);
+    sub.classList.remove("drop-target");
   });
 
-  return slot;
+  return sub;
+}
+
+function getSplitSubIndexFromPointer(event, splitWrap) {
+  const rect = splitWrap.getBoundingClientRect();
+  const y = event.clientY - rect.top;
+  return y < rect.height / 2 ? 0 : 1;
 }
 
 function onSlotDragOver(event) {
@@ -348,22 +448,20 @@ function onSlotDragOver(event) {
   event.currentTarget.classList.add("drop-target");
 }
 
-function onSlotDrop(event, columnId, measureId, beatIndex, slotIndex) {
+function onSlotDrop(event, columnId, measureId, beatIndex, slotIndex, subIndex = null) {
   event.preventDefault();
   const payload = parseDragPayload(event);
   if (!payload) return;
 
-  const targetBeat = findBeat(columnId, measureId, beatIndex);
-  if (!targetBeat) return;
-
   if (payload.type === "palette-symbol") {
     if (!isSymbolCompatible(state.score.instrument, payload.base)) return;
-    targetBeat.slots[slotIndex] = makeSymbol(
+    const next = makeSymbol(
       payload.base,
       payload.accidental || "",
       payload.ornament || ""
     );
-    setActiveCell(columnId, measureId, beatIndex, slotIndex);
+    setSymbolAtLocation(columnId, measureId, beatIndex, slotIndex, subIndex, next);
+    setActiveCell(columnId, measureId, beatIndex, slotIndex, subIndex);
     render();
     return;
   }
@@ -372,16 +470,9 @@ function onSlotDrop(event, columnId, measureId, beatIndex, slotIndex) {
     const found = findSymbolById(payload.symbolId);
     if (!found || !isSymbolCompatible(state.score.instrument, found.symbol.base)) return;
 
-    const sourceBeat = findBeat(
-      found.location.columnId,
-      found.location.measureId,
-      found.location.beatIndex
-    );
-    if (!sourceBeat) return;
-
-    sourceBeat.slots[found.location.slotIndex] = null;
-    targetBeat.slots[slotIndex] = found.symbol;
-    setActiveCell(columnId, measureId, beatIndex, slotIndex);
+    removeSymbolAtLocation(found.location);
+    setSymbolAtLocation(columnId, measureId, beatIndex, slotIndex, subIndex, found.symbol);
+    setActiveCell(columnId, measureId, beatIndex, slotIndex, subIndex);
     render();
   }
 }
@@ -404,21 +495,64 @@ function findBeat(columnId, measureId, beatIndex) {
   return measure.beats[beatIndex] || null;
 }
 
+function setSymbolAtLocation(columnId, measureId, beatIndex, slotIndex, subIndex, symbol) {
+  const beat = findBeat(columnId, measureId, beatIndex);
+  if (!beat) return;
+  if (subIndex === null || subIndex === undefined) {
+    beat.slots[slotIndex] = symbol;
+    return;
+  }
+  const slotValue = beat.slots[slotIndex];
+  if (!isSplitSlot(slotValue)) {
+    beat.slots[slotIndex] = makeSplitSlot();
+  }
+  beat.slots[slotIndex].notes[subIndex] = symbol;
+}
+
+function removeSymbolAtLocation(location) {
+  const beat = findBeat(location.columnId, location.measureId, location.beatIndex);
+  if (!beat) return;
+  if (location.subIndex === null || location.subIndex === undefined) {
+    beat.slots[location.slotIndex] = null;
+    return;
+  }
+  const slotValue = beat.slots[location.slotIndex];
+  if (!isSplitSlot(slotValue)) return;
+  slotValue.notes[location.subIndex] = null;
+}
+
 function findSymbolById(symbolId) {
   for (const column of state.score.columns) {
     for (const measure of column.measures) {
       for (let beatIndex = 0; beatIndex < measure.beats.length; beatIndex += 1) {
         const beat = measure.beats[beatIndex];
         for (let slotIndex = 0; slotIndex < beat.slots.length; slotIndex += 1) {
-          const symbol = beat.slots[slotIndex];
-          if (symbol?.id === symbolId) {
+          const slotValue = beat.slots[slotIndex];
+          if (isSplitSlot(slotValue)) {
+            for (let subIndex = 0; subIndex < slotValue.notes.length; subIndex += 1) {
+              const subSymbol = slotValue.notes[subIndex];
+              if (subSymbol?.id === symbolId) {
+                return {
+                  symbol: subSymbol,
+                  location: {
+                    columnId: column.id,
+                    measureId: measure.id,
+                    beatIndex,
+                    slotIndex,
+                    subIndex
+                  }
+                };
+              }
+            }
+          } else if (slotValue?.id === symbolId) {
             return {
-              symbol,
+              symbol: slotValue,
               location: {
                 columnId: column.id,
                 measureId: measure.id,
                 beatIndex,
-                slotIndex
+                slotIndex,
+                subIndex: null
               }
             };
           }
@@ -438,7 +572,8 @@ function getAllSymbolsForInstrument(instrument) {
     return [
       ...shamisenPalettes.sanNoIto,
       ...shamisenPalettes.niNoIto,
-      ...shamisenPalettes.ichiNoIto
+      ...shamisenPalettes.ichiNoIto,
+      ...shamisenPalettes.rests
     ];
   }
   return instrumentPalettes[instrument] || [];
@@ -459,43 +594,101 @@ function symbolLabel(symbol) {
 
 function addColumn() {
   state.score.columns.push(makeColumn(state.score.columns.length + 1));
+  renumberColumns();
+  ensureCurrentPageInRange();
   render();
 }
 
-function loadSakuraOpening() {
-  const firstColumn = state.score.columns[0];
-  if (!firstColumn) return;
-  const firstMeasure = firstColumn.measures[0];
-  if (!firstMeasure) return;
+function deleteSelectedColumn() {
+  if (!state.selectedColumnId) return;
+  const index = state.score.columns.findIndex((item) => item.id === state.selectedColumnId);
+  if (index < 0) return;
+  const deletedId = state.score.columns[index].id;
+  state.score.columns.splice(index, 1);
 
-  const opening = ["5", "5", "7", "●"];
-  firstMeasure.beats.forEach((beat, beatIndex) => {
-    beat.slots[0] = makeSymbol(opening[beatIndex]);
-    beat.slots[1] = null;
-  });
+  if (state.score.columns.length === 0) {
+    state.score.columns.push(makeColumn(1));
+  }
+
+  if (state.activeCell?.columnId === deletedId) {
+    state.activeCell = null;
+  }
+  state.selectedColumnId = null;
+  renumberColumns();
+  ensureCurrentPageInRange();
   render();
+}
+
+function renumberColumns() {
+  state.score.columns.forEach((column, index) => {
+    const startMeasure = index * 4 + 1;
+    column.label = String(startMeasure);
+    for (let i = 0; i < column.measures.length; i += 1) {
+      column.measures[i].index = startMeasure + i;
+    }
+  });
+}
+
+function getPageCount() {
+  return Math.max(1, Math.ceil(state.score.columns.length / COLUMNS_PER_PAGE));
+}
+
+function getVisibleColumns() {
+  const start = state.currentPage * COLUMNS_PER_PAGE;
+  return state.score.columns.slice(start, start + COLUMNS_PER_PAGE);
+}
+
+function movePage(delta) {
+  const next = Math.min(
+    Math.max(state.currentPage + delta, 0),
+    getPageCount() - 1
+  );
+  state.currentPage = next;
+  render();
+}
+
+function ensureCurrentPageInRange() {
+  state.currentPage = Math.min(state.currentPage, getPageCount() - 1);
 }
 
 function placeAtActiveCell(base) {
   if (!state.activeCell) return;
   if (!isSymbolCompatible(state.score.instrument, base)) return;
 
-  const beat = findBeat(
-    state.activeCell.columnId,
-    state.activeCell.measureId,
-    state.activeCell.beatIndex
-  );
-  if (!beat) return;
-
-  beat.slots[state.activeCell.slotIndex] = makeSymbol(
+  const next = makeSymbol(
     base,
     getPlacementAccidental(),
     getPlacementOrnament()
+  );
+  setSymbolAtLocation(
+    state.activeCell.columnId,
+    state.activeCell.measureId,
+    state.activeCell.beatIndex,
+    state.activeCell.slotIndex,
+    state.activeCell.subIndex,
+    next
   );
   render();
 }
 
 function clearActiveCell() {
+  if (!state.activeCell) return;
+  removeSymbolAtLocation(state.activeCell);
+  render();
+}
+
+function isActiveCellSplit() {
+  if (!state.activeCell) return false;
+  const beat = findBeat(
+    state.activeCell.columnId,
+    state.activeCell.measureId,
+    state.activeCell.beatIndex
+  );
+  if (!beat) return false;
+  return isSplitSlot(beat.slots[state.activeCell.slotIndex]);
+}
+
+function splitActiveCellSlot() {
   if (!state.activeCell) return;
   const beat = findBeat(
     state.activeCell.columnId,
@@ -503,7 +696,39 @@ function clearActiveCell() {
     state.activeCell.beatIndex
   );
   if (!beat) return;
-  beat.slots[state.activeCell.slotIndex] = null;
+  const existing = beat.slots[state.activeCell.slotIndex];
+  if (isSplitSlot(existing)) return;
+  const split = makeSplitSlot();
+  split.notes[0] = existing;
+  beat.slots[state.activeCell.slotIndex] = split;
+  setActiveCell(
+    state.activeCell.columnId,
+    state.activeCell.measureId,
+    state.activeCell.beatIndex,
+    state.activeCell.slotIndex,
+    0
+  );
+  render();
+}
+
+function mergeActiveCellSlot() {
+  if (!state.activeCell) return;
+  const beat = findBeat(
+    state.activeCell.columnId,
+    state.activeCell.measureId,
+    state.activeCell.beatIndex
+  );
+  if (!beat) return;
+  const existing = beat.slots[state.activeCell.slotIndex];
+  if (!isSplitSlot(existing)) return;
+  beat.slots[state.activeCell.slotIndex] = existing.notes[0] || existing.notes[1] || null;
+  setActiveCell(
+    state.activeCell.columnId,
+    state.activeCell.measureId,
+    state.activeCell.beatIndex,
+    state.activeCell.slotIndex,
+    null
+  );
   render();
 }
 
@@ -529,24 +754,31 @@ function getActiveCellSymbol() {
     state.activeCell.beatIndex
   );
   if (!beat) return null;
-  return beat.slots[state.activeCell.slotIndex];
+  const slotValue = beat.slots[state.activeCell.slotIndex];
+  if (isSplitSlot(slotValue)) {
+    const subIndex = state.activeCell.subIndex ?? 0;
+    return slotValue.notes[subIndex];
+  }
+  return slotValue;
 }
 
-function setActiveCell(columnId, measureId, beatIndex, slotIndex) {
+function setActiveCell(columnId, measureId, beatIndex, slotIndex, subIndex = null) {
   state.activeCell = {
     columnId,
     measureId,
     beatIndex,
-    slotIndex
+    slotIndex,
+    subIndex
   };
 }
 
-function isActiveCell(columnId, measureId, beatIndex, slotIndex) {
+function isActiveCell(columnId, measureId, beatIndex, slotIndex, subIndex = null) {
   if (!state.activeCell) return false;
   return state.activeCell.columnId === columnId
     && state.activeCell.measureId === measureId
     && state.activeCell.beatIndex === beatIndex
-    && state.activeCell.slotIndex === slotIndex;
+    && state.activeCell.slotIndex === slotIndex
+    && state.activeCell.subIndex === subIndex;
 }
 
 function activeCellLabel() {
@@ -556,7 +788,10 @@ function activeCellLabel() {
   const measure = column.measures.find((item) => item.id === state.activeCell.measureId);
   if (!measure) return "";
   const slotName = state.activeCell.slotIndex === 0 ? "1st 8th" : "2nd 8th";
-  return `${column.label} - M${measure.index} - Beat ${state.activeCell.beatIndex + 1} - ${slotName}`;
+  const subName = state.activeCell.subIndex === null || state.activeCell.subIndex === undefined
+    ? ""
+    : state.activeCell.subIndex === 0 ? " (1st 16th)" : " (2nd 16th)";
+  return `${column.label} - M${measure.index} - Beat ${state.activeCell.beatIndex + 1} - ${slotName}${subName}`;
 }
 
 function titleInput() {
@@ -573,6 +808,10 @@ function updateSheetTitleText() {
   const titleNode = document.querySelector(".sheet-title-text");
   if (titleNode) {
     titleNode.textContent = state.score.title || "Untitled";
+  }
+  const sideTitle = document.querySelector(".sheet-side-title");
+  if (sideTitle) {
+    sideTitle.textContent = state.score.title || "Untitled";
   }
 }
 
