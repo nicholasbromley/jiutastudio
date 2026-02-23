@@ -7,7 +7,8 @@ const shamisenPalettes = {
   sanNoIto: makeDotted(["1", "2", "3", "4", "5", "6", "7", "8", "9"]),
   niNoIto: makeDotted(["一", "二", "三", "四", "五", "六", "七", "八", "九"]),
   ichiNoIto: makeDotted(["イ一", "イ二", "イ三", "イ四", "イ五", "イ六", "イ七", "イ八", "イ九"]),
-  ornaments: ["", "ス", "^"]
+  ornaments: ["", "ス", "^"],
+  accidentals: ["", "♯"]
 };
 
 const instruments = ["Koto", "Shamisen", "Shakuhachi"];
@@ -25,7 +26,8 @@ const state = {
   },
   activeCell: null,
   selectedSymbol: "5",
-  selectedOrnament: ""
+  selectedOrnament: "",
+  selectedAccidental: ""
 };
 
 function makeColumn(index) {
@@ -50,21 +52,17 @@ function makeBeat() {
   };
 }
 
-function makeSymbol(base, ornament = "") {
+function makeSymbol(base, accidental = "", ornament = "") {
   return {
     id: crypto.randomUUID(),
     base,
+    accidental,
     ornament
   };
 }
 
 function makeDotted(items) {
-  const out = [];
-  items.forEach((item) => {
-    out.push(item);
-    out.push(`${item}•`);
-  });
-  return out;
+  return [...items, ...items.map((item) => `${item}•`)];
 }
 
 function render() {
@@ -102,6 +100,23 @@ function leftPanel() {
   if (state.activeCell) {
     panel.append(el("h2", { text: "Active Cell" }));
     panel.append(el("p", { text: activeCellLabel() }));
+    if (state.score.instrument === "Shamisen") {
+      panel.append(el("p", { className: "palette-label", text: "Quick Markers" }));
+      const quick = el("div", { className: "ornament-row" });
+      quick.append(
+        button("Sukui", () => setActiveCellOrnament("ス"), "ornament-btn"),
+        button("Hajiki", () => setActiveCellOrnament("^"), "ornament-btn"),
+        button("No Orna", () => setActiveCellOrnament(""), "ornament-btn")
+      );
+      panel.append(quick);
+      const accidental = el("div", { className: "ornament-row" });
+      accidental.append(
+        button("Sharp", () => setActiveCellAccidental("♯"), "ornament-btn"),
+        button("No Sharp", () => setActiveCellAccidental(""), "ornament-btn"),
+        el("div")
+      );
+      panel.append(accidental);
+    }
     panel.append(button("Clear Active Cell", () => clearActiveCell(), "danger"));
   }
 
@@ -119,9 +134,10 @@ function rightPanel() {
     panel.append(buildPaletteSection("Ni no ito (2nd)", shamisenPalettes.niNoIto));
     panel.append(buildPaletteSection("Ichi no ito (1st)", shamisenPalettes.ichiNoIto));
     panel.append(ornamentSection());
+    panel.append(accidentalSection());
     panel.append(el("p", {
       className: "hint",
-      text: "Ornaments are added to the right: ス for sukui, ^ for hajiki."
+      text: "Set defaults for new note placement, or use Quick Markers for the selected cell."
     }));
   } else {
     const palette = el("div", { className: "palette-grid" });
@@ -148,7 +164,7 @@ function buildPaletteSection(title, symbols) {
 
 function ornamentSection() {
   const wrap = el("section", { className: "palette-section" });
-  wrap.append(el("p", { className: "palette-label", text: "Ornament" }));
+  wrap.append(el("p", { className: "palette-label", text: "Default Ornament (new notes)" }));
 
   const row = el("div", { className: "ornament-row" });
   shamisenPalettes.ornaments.forEach((ornament) => {
@@ -164,6 +180,30 @@ function ornamentSection() {
       )
     );
   });
+
+  wrap.append(row);
+  return wrap;
+}
+
+function accidentalSection() {
+  const wrap = el("section", { className: "palette-section" });
+  wrap.append(el("p", { className: "palette-label", text: "Default Accidental (new notes)" }));
+
+  const row = el("div", { className: "ornament-row" });
+  shamisenPalettes.accidentals.forEach((accidental) => {
+    const label = accidental || "none";
+    const active = state.selectedAccidental === accidental;
+    row.append(
+      button(
+        label,
+        () => {
+          state.selectedAccidental = accidental;
+        },
+        active ? "primary ornament-btn" : "ornament-btn"
+      )
+    );
+  });
+  row.append(el("div"));
 
   wrap.append(row);
   return wrap;
@@ -185,6 +225,7 @@ function symbolButton(symbol) {
     event.dataTransfer.setData("text/plain", JSON.stringify({
       type: "palette-symbol",
       base: symbol,
+      accidental: getPlacementAccidental(),
       ornament: getPlacementOrnament(),
       instrument: state.score.instrument
     }));
@@ -317,7 +358,11 @@ function onSlotDrop(event, columnId, measureId, beatIndex, slotIndex) {
 
   if (payload.type === "palette-symbol") {
     if (!isSymbolCompatible(state.score.instrument, payload.base)) return;
-    targetBeat.slots[slotIndex] = makeSymbol(payload.base, payload.ornament || "");
+    targetBeat.slots[slotIndex] = makeSymbol(
+      payload.base,
+      payload.accidental || "",
+      payload.ornament || ""
+    );
     setActiveCell(columnId, measureId, beatIndex, slotIndex);
     render();
     return;
@@ -403,9 +448,13 @@ function getPlacementOrnament() {
   return state.score.instrument === "Shamisen" ? state.selectedOrnament : "";
 }
 
+function getPlacementAccidental() {
+  return state.score.instrument === "Shamisen" ? state.selectedAccidental : "";
+}
+
 function symbolLabel(symbol) {
   if (!symbol) return "";
-  return `${symbol.base}${symbol.ornament || ""}`;
+  return `${symbol.base}${symbol.accidental || ""}${symbol.ornament || ""}`;
 }
 
 function addColumn() {
@@ -438,7 +487,11 @@ function placeAtActiveCell(base) {
   );
   if (!beat) return;
 
-  beat.slots[state.activeCell.slotIndex] = makeSymbol(base, getPlacementOrnament());
+  beat.slots[state.activeCell.slotIndex] = makeSymbol(
+    base,
+    getPlacementAccidental(),
+    getPlacementOrnament()
+  );
   render();
 }
 
@@ -452,6 +505,31 @@ function clearActiveCell() {
   if (!beat) return;
   beat.slots[state.activeCell.slotIndex] = null;
   render();
+}
+
+function setActiveCellOrnament(ornament) {
+  const symbol = getActiveCellSymbol();
+  if (!symbol) return;
+  symbol.ornament = ornament;
+  render();
+}
+
+function setActiveCellAccidental(accidental) {
+  const symbol = getActiveCellSymbol();
+  if (!symbol) return;
+  symbol.accidental = accidental;
+  render();
+}
+
+function getActiveCellSymbol() {
+  if (!state.activeCell) return null;
+  const beat = findBeat(
+    state.activeCell.columnId,
+    state.activeCell.measureId,
+    state.activeCell.beatIndex
+  );
+  if (!beat) return null;
+  return beat.slots[state.activeCell.slotIndex];
 }
 
 function setActiveCell(columnId, measureId, beatIndex, slotIndex) {
@@ -511,6 +589,7 @@ function instrumentSelect() {
     state.score.instrument = event.target.value;
     state.selectedSymbol = getAllSymbolsForInstrument(state.score.instrument)[0] || "";
     state.selectedOrnament = "";
+    state.selectedAccidental = "";
     render();
   });
   return select;
