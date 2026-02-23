@@ -131,17 +131,25 @@ function rightPanel() {
 
 function canvas() {
   const center = el("main", { className: "score-stage" });
-  const header = el("div", { className: "score-title" });
-  header.append(el("strong", { text: state.score.title }));
-  header.append(el("span", { text: `${state.score.timeSignature.beatsPerMeasure}/${state.score.timeSignature.beatUnit}` }));
-  center.append(header);
+  const page = el("section", { className: "sheet-page" });
+  const meta = el("div", { className: "sheet-meta" });
+  meta.append(el("span", { text: "Repeat Twice" }));
+  meta.append(el("span", { text: `${state.score.timeSignature.beatsPerMeasure}/${state.score.timeSignature.beatUnit}` }));
+  page.append(meta);
 
+  const body = el("div", { className: "sheet-body" });
   const track = el("div", { className: "column-track" });
   state.score.columns.forEach((column) => {
     track.append(renderColumn(column));
   });
 
-  center.append(track);
+  const sideText = el("div", { className: "sheet-side-text" });
+  sideText.append(el("span", { text: "さくら" }));
+  sideText.append(el("span", { text: "合奏" }));
+
+  body.append(track, sideText);
+  page.append(body);
+  center.append(page);
   return center;
 }
 
