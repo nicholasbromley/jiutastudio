@@ -1,8 +1,16 @@
 const instrumentPalettes = {
   Koto: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "スクイ", "押手", "●"],
-  Shamisen: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "打", "ス", "ハ", "●"],
   Shakuhachi: ["ロ", "ツ", "レ", "チ", "リ", "ロ乙", "メリ", "カリ", "ユリ", "●"]
 };
+
+const shamisenPalettes = {
+  sanNoIto: makeDotted(["1", "2", "3", "4", "5", "6", "7", "8", "9"]),
+  niNoIto: makeDotted(["一", "二", "三", "四", "五", "六", "七", "八", "九"]),
+  ichiNoIto: makeDotted(["イ一", "イ二", "イ三", "イ四", "イ五", "イ六", "イ七", "イ八", "イ九"]),
+  ornaments: ["", "ス", "^"]
+};
+
+const instruments = ["Koto", "Shamisen", "Shakuhachi"];
 
 const state = {
   score: {
@@ -16,7 +24,8 @@ const state = {
     columns: [makeColumn(1)]
   },
   activeCell: null,
-  selectedSymbol: "5"
+  selectedSymbol: "5",
+  selectedOrnament: ""
 };
 
 function makeColumn(index) {
@@ -41,11 +50,21 @@ function makeBeat() {
   };
 }
 
-function makeSymbol(base) {
+function makeSymbol(base, ornament = "") {
   return {
     id: crypto.randomUUID(),
-    base
+    base,
+    ornament
   };
+}
+
+function makeDotted(items) {
+  const out = [];
+  items.forEach((item) => {
+    out.push(item);
+    out.push(`${item}•`);
+  });
+  return out;
 }
 
 function render() {
@@ -81,9 +100,8 @@ function leftPanel() {
   );
 
   if (state.activeCell) {
-    const pos = activeCellLabel();
     panel.append(el("h2", { text: "Active Cell" }));
-    panel.append(el("p", { text: pos }));
+    panel.append(el("p", { text: activeCellLabel() }));
     panel.append(button("Clear Active Cell", () => clearActiveCell(), "danger"));
   }
 
@@ -95,44 +113,92 @@ function rightPanel() {
   panel.append(el("h2", { text: "Palette" }));
   panel.append(el("p", { text: `${state.score.instrument} symbols` }));
 
-  const palette = el("div", { className: "palette-grid" });
-  const choices = instrumentPalettes[state.score.instrument];
-
-  choices.forEach((symbol) => {
-    const isActive = symbol === state.selectedSymbol;
-    const item = button(
-      symbol,
-      () => {
-        state.selectedSymbol = symbol;
-        placeAtActiveCell(symbol);
-      },
-      isActive ? "primary palette-symbol" : "palette-symbol"
-    );
-    item.draggable = true;
-    item.addEventListener("dragstart", (event) => {
-      event.dataTransfer.setData("text/plain", JSON.stringify({
-        type: "palette-symbol",
-        base: symbol,
-        instrument: state.score.instrument
-      }));
-      event.dataTransfer.effectAllowed = "copy";
+  if (state.score.instrument === "Shamisen") {
+    panel.append(el("h2", { text: "String" }));
+    panel.append(buildPaletteSection("San no ito (3rd)", shamisenPalettes.sanNoIto));
+    panel.append(buildPaletteSection("Ni no ito (2nd)", shamisenPalettes.niNoIto));
+    panel.append(buildPaletteSection("Ichi no ito (1st)", shamisenPalettes.ichiNoIto));
+    panel.append(ornamentSection());
+    panel.append(el("p", {
+      className: "hint",
+      text: "Ornaments are added to the right: ス for sukui, ^ for hajiki."
+    }));
+  } else {
+    const palette = el("div", { className: "palette-grid" });
+    (instrumentPalettes[state.score.instrument] || []).forEach((symbol) => {
+      palette.append(symbolButton(symbol));
     });
-    palette.append(item);
-  });
-  panel.append(palette);
-
-  panel.append(el("p", {
-    className: "hint",
-    text: "Drag from palette to any eighth-note slot."
-  }));
+    panel.append(palette);
+    panel.append(el("p", { className: "hint", text: "Drag from palette to any eighth-note slot." }));
+  }
 
   return panel;
+}
+
+function buildPaletteSection(title, symbols) {
+  const wrap = el("section", { className: "palette-section" });
+  wrap.append(el("p", { className: "palette-label", text: title }));
+  const grid = el("div", { className: "palette-grid" });
+  symbols.forEach((symbol) => {
+    grid.append(symbolButton(symbol));
+  });
+  wrap.append(grid);
+  return wrap;
+}
+
+function ornamentSection() {
+  const wrap = el("section", { className: "palette-section" });
+  wrap.append(el("p", { className: "palette-label", text: "Ornament" }));
+
+  const row = el("div", { className: "ornament-row" });
+  shamisenPalettes.ornaments.forEach((ornament) => {
+    const label = ornament || "none";
+    const active = state.selectedOrnament === ornament;
+    row.append(
+      button(
+        label,
+        () => {
+          state.selectedOrnament = ornament;
+        },
+        active ? "primary ornament-btn" : "ornament-btn"
+      )
+    );
+  });
+
+  wrap.append(row);
+  return wrap;
+}
+
+function symbolButton(symbol) {
+  const active = symbol === state.selectedSymbol;
+  const item = button(
+    symbol,
+    () => {
+      state.selectedSymbol = symbol;
+      placeAtActiveCell(symbol);
+    },
+    active ? "primary palette-symbol" : "palette-symbol"
+  );
+
+  item.draggable = true;
+  item.addEventListener("dragstart", (event) => {
+    event.dataTransfer.setData("text/plain", JSON.stringify({
+      type: "palette-symbol",
+      base: symbol,
+      ornament: getPlacementOrnament(),
+      instrument: state.score.instrument
+    }));
+    event.dataTransfer.effectAllowed = "copy";
+  });
+
+  return item;
 }
 
 function canvas() {
   const center = el("main", { className: "score-stage" });
   const page = el("section", { className: "sheet-page" });
   const meta = el("div", { className: "sheet-meta" });
+  meta.append(el("span", { className: "sheet-title-text", text: state.score.title }));
   meta.append(el("span", { text: "Repeat Twice" }));
   meta.append(el("span", { text: `${state.score.timeSignature.beatsPerMeasure}/${state.score.timeSignature.beatUnit}` }));
   page.append(meta);
@@ -194,17 +260,12 @@ function renderBeatCell(column, measure, beat, beatIndex) {
 function renderSlot(column, measure, beatIndex, slotIndex, symbol) {
   const active = isActiveCell(column.id, measure.id, beatIndex, slotIndex);
   const slot = el("div", { className: `slot${active ? " active" : ""}` });
-  slot.textContent = symbol?.base || "";
+  slot.textContent = symbolLabel(symbol);
   slot.draggable = Boolean(symbol);
 
   slot.addEventListener("click", (event) => {
     event.stopPropagation();
-    state.activeCell = {
-      columnId: column.id,
-      measureId: measure.id,
-      beatIndex,
-      slotIndex
-    };
+    setActiveCell(column.id, measure.id, beatIndex, slotIndex);
     render();
   });
 
@@ -212,13 +273,7 @@ function renderSlot(column, measure, beatIndex, slotIndex, symbol) {
     if (!symbol) return;
     event.dataTransfer.setData("text/plain", JSON.stringify({
       type: "existing-symbol",
-      symbolId: symbol.id,
-      from: {
-        columnId: column.id,
-        measureId: measure.id,
-        beatIndex,
-        slotIndex
-      }
+      symbolId: symbol.id
     }));
     event.dataTransfer.effectAllowed = "move";
   });
@@ -243,8 +298,9 @@ function onSlotDragOver(event) {
 
   if (payload.type === "existing-symbol") {
     const found = findSymbolById(payload.symbolId);
-    if (!found) return;
-    if (!isSymbolCompatible(state.score.instrument, found.symbol.base)) return;
+    if (!found || !isSymbolCompatible(state.score.instrument, found.symbol.base)) {
+      return;
+    }
   }
 
   event.preventDefault();
@@ -261,7 +317,7 @@ function onSlotDrop(event, columnId, measureId, beatIndex, slotIndex) {
 
   if (payload.type === "palette-symbol") {
     if (!isSymbolCompatible(state.score.instrument, payload.base)) return;
-    targetBeat.slots[slotIndex] = makeSymbol(payload.base);
+    targetBeat.slots[slotIndex] = makeSymbol(payload.base, payload.ornament || "");
     setActiveCell(columnId, measureId, beatIndex, slotIndex);
     render();
     return;
@@ -269,8 +325,7 @@ function onSlotDrop(event, columnId, measureId, beatIndex, slotIndex) {
 
   if (payload.type === "existing-symbol") {
     const found = findSymbolById(payload.symbolId);
-    if (!found) return;
-    if (!isSymbolCompatible(state.score.instrument, found.symbol.base)) return;
+    if (!found || !isSymbolCompatible(state.score.instrument, found.symbol.base)) return;
 
     const sourceBeat = findBeat(
       found.location.columnId,
@@ -330,7 +385,27 @@ function findSymbolById(symbolId) {
 }
 
 function isSymbolCompatible(instrument, base) {
-  return (instrumentPalettes[instrument] || []).includes(base);
+  return getAllSymbolsForInstrument(instrument).includes(base);
+}
+
+function getAllSymbolsForInstrument(instrument) {
+  if (instrument === "Shamisen") {
+    return [
+      ...shamisenPalettes.sanNoIto,
+      ...shamisenPalettes.niNoIto,
+      ...shamisenPalettes.ichiNoIto
+    ];
+  }
+  return instrumentPalettes[instrument] || [];
+}
+
+function getPlacementOrnament() {
+  return state.score.instrument === "Shamisen" ? state.selectedOrnament : "";
+}
+
+function symbolLabel(symbol) {
+  if (!symbol) return "";
+  return `${symbol.base}${symbol.ornament || ""}`;
 }
 
 function addColumn() {
@@ -363,7 +438,7 @@ function placeAtActiveCell(base) {
   );
   if (!beat) return;
 
-  beat.slots[state.activeCell.slotIndex] = makeSymbol(base);
+  beat.slots[state.activeCell.slotIndex] = makeSymbol(base, getPlacementOrnament());
   render();
 }
 
@@ -402,7 +477,8 @@ function activeCellLabel() {
   if (!column) return "";
   const measure = column.measures.find((item) => item.id === state.activeCell.measureId);
   if (!measure) return "";
-  return `${column.label} - M${measure.index} - Beat ${state.activeCell.beatIndex + 1} - ${state.activeCell.slotIndex === 0 ? "1st 8th" : "2nd 8th"}`;
+  const slotName = state.activeCell.slotIndex === 0 ? "1st 8th" : "2nd 8th";
+  return `${column.label} - M${measure.index} - Beat ${state.activeCell.beatIndex + 1} - ${slotName}`;
 }
 
 function titleInput() {
@@ -410,14 +486,21 @@ function titleInput() {
   input.value = state.score.title;
   input.addEventListener("input", (event) => {
     state.score.title = event.target.value;
-    render();
+    updateSheetTitleText();
   });
   return input;
 }
 
+function updateSheetTitleText() {
+  const titleNode = document.querySelector(".sheet-title-text");
+  if (titleNode) {
+    titleNode.textContent = state.score.title || "Untitled";
+  }
+}
+
 function instrumentSelect() {
   const select = el("select");
-  Object.keys(instrumentPalettes).forEach((instrument) => {
+  instruments.forEach((instrument) => {
     const option = el("option", { text: instrument });
     option.value = instrument;
     option.selected = instrument === state.score.instrument;
@@ -426,7 +509,8 @@ function instrumentSelect() {
 
   select.addEventListener("change", (event) => {
     state.score.instrument = event.target.value;
-    state.selectedSymbol = (instrumentPalettes[state.score.instrument] || [])[0] || "";
+    state.selectedSymbol = getAllSymbolsForInstrument(state.score.instrument)[0] || "";
+    state.selectedOrnament = "";
     render();
   });
   return select;

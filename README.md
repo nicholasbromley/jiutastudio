@@ -25,5 +25,10 @@ Then open:
 - Drag and drop from instrument-specific palette into any slot
 - Drag and move existing symbols slot-to-slot
 - Instrument compatibility checks when dropping symbols
+- Shamisen palette with string-specific notation sets:
+  - San no ito: `1..9` and dotted octave markers (`1•..9•`)
+  - Ni no ito: `一..九` and dotted octave markers
+  - Ichi no ito: `イ一..イ九` and dotted octave markers
+- Shamisen ornament markers placed to the right of notes (`ス` for sukui, `^` for hajiki)
 - Quick load button for Sakura opening pattern (`5, 5, 7, ●`)
 - Score metadata controls (title and tempo)
